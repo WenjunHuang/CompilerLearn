@@ -1,15 +1,18 @@
 "use client";
 
-import { Grammar, Production, SENTINEL, computeLL1Tables, parseGrammar } from "@/app/LL1/parser";
+import {
+  Grammar,
+  LL1Table,
+  ParseStepState,
+  Parser,
+  Production,
+  SENTINEL,
+  computeLL1Tables,
+  parseGrammar,
+  parseStep,
+  startParser,
+} from "@/app/LL1/parser";
 import { useState } from "react";
-
-interface LL1Table {
-  grammar: Grammar;
-  nullable: Set<string>;
-  first: Map<string, Set<string>>;
-  follow: Map<string, Set<string>>;
-  transition: Map<string, Map<string, Production[]>>;
-}
 
 export default function LL1Page() {
   const [grammarInput, setGrammarInput] = useState<string>(
@@ -115,10 +118,15 @@ function NullableFirstFollowTable(props: { ll1Table: LL1Table | null }) {
 function Interpreter(props: { ll1Table: LL1Table | null }) {
   const { ll1Table } = props;
   const [tokenStream, setTokenStream] = useState<string>("id + id * id");
-  const [stack, setStack] = useState<string[]>([]);
-  const parse = (input: string, ll1Table: LL1Table) => {
-    const tokens = input.trim().split(/\s/).concat([SENTINEL]);
-    const stack = ["$", ll1Table.grammar.start];
+  const [parseState, setParseState] = useState<ParseStepState | null>(null);
+  const startParse = (input: string, ll1Table: LL1Table) => {
+    const state = startParser(ll1Table, [...input.split(/\s/), SENTINEL]);
+    setParseState(state);
+  };
+
+  const stepForward = (parser: Parser) => {
+    const state = parseStep(parser);
+    setParseState(state);
   };
 
   return (
@@ -141,14 +149,16 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
           className={
             "rounded-full bg-blue-500 px-5 py-2 font-bold text-white hover:bg-blue-600 disabled:bg-gray-300"
           }
-          disabled={ll1Table == null || !tokenStream}>
+          onClick={() => ll1Table && tokenStream && startParse(tokenStream, ll1Table)}
+          disabled={!(ll1Table && tokenStream)}>
           Start/Reset
         </button>
         <button
           className={
             "rounded-full bg-blue-500 px-5 py-2 font-bold text-white hover:bg-blue-600 disabled:bg-gray-300"
           }
-          disabled={ll1Table == null || !tokenStream}>
+          disabled={!(ll1Table && tokenStream)}
+          onClick={() => parseState && stepForward(parseState.parser)}>
           Step Forward
         </button>
       </div>
@@ -164,7 +174,7 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
                 name="stack"
                 disabled={true}
                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
-                value={stack.join(" ")}
+                value={parseState?.parser.stack.join(" ") ?? ""}
               />
             </div>
           </div>
@@ -177,6 +187,10 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
                 type="text"
                 name="remainingInput"
                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
+                disabled={true}
+                value={parseState?.parser.tokenStream
+                    .slice(parseState?.parser.position ?? 0)
+                    .join(" ") ?? ""}
               />
             </div>
           </div>
@@ -189,7 +203,9 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
               <input
                 type="text"
                 name="rule"
+                disabled={true}
                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
+                value={parseState?.parser.rule ?? ""}
               />
             </div>
           </div>

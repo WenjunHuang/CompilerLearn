@@ -71,6 +71,8 @@ export const parseGrammar = (input: string): Grammar => {
 
 export const computeNullable = (grammar: Grammar): Set<string> => {
   const nullable = new Set<string>();
+  nullable.add(EPSILON)
+
   let changed = true;
   while (changed) {
     changed = false;
@@ -241,20 +243,20 @@ export const computeFollow = (
   nullable: Set<string>,
   first: Map<string, Set<string>>,
 ): Map<string, Set<string>> => {
-  const last = new Map<string, Set<string>>();
+  const follow = new Map<string, Set<string>>();
   grammar.nonTerminals.forEach(nt => {
-    last.set(nt, new Set<string>());
+    follow.set(nt, new Set<string>());
   });
   let changed = true;
   while (changed) {
     changed = false;
     for (const rule of grammar.rules) {
-      let temp = new Set<string>(last.get(rule.lhs)!);
+      let temp = new Set<string>(follow.get(rule.lhs)!);
       rule.rhs.toReversed().forEach(sym => {
         if (grammar.terminals.has(sym)) {
           temp = new Set<string>([sym]);
         } else if (grammar.nonTerminals.has(sym)) {
-          const lastOfSym = last.get(sym)!;
+          const lastOfSym = follow.get(sym)!;
           changed = addToSet(temp, lastOfSym);
 
           if (!nullable.has(sym)) {
@@ -266,15 +268,15 @@ export const computeFollow = (
       });
     }
   }
-  return last;
+  return follow;
 };
 
 export const computeLL1Tables = (grammar: Grammar) => {
   const nullable = computeNullable(grammar);
   const first = computeFirst(grammar, nullable);
   const follow = computeFollow(grammar, nullable, first);
-
   const transition = new Map<string, Map<string, Array<Production>>>();
+
   grammar.nonTerminals.forEach(nt => {
     const row = new Map<string, Array<Production>>();
     grammar.terminals.forEach(t => {
@@ -285,10 +287,11 @@ export const computeLL1Tables = (grammar: Grammar) => {
 
   grammar.rules.forEach(rule => {
     reachableTerminals(rule.rhs, first, nullable).forEach(t => {
-      transition.get(rule.lhs)!.get(t)!.push(rule);
+      transition.get(rule.lhs)?.get(t)?.push(rule);
     });
+
     if (rule.rhs.every(x => nullable.has(x))) {
-      follow.get(rule.lhs)!.forEach(x => {
+      follow.get(rule.lhs)?.forEach(x => {
         transition.get(rule.lhs)!.get(x)!.push(rule);
       });
     }

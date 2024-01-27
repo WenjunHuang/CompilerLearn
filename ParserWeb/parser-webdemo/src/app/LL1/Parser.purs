@@ -10,10 +10,11 @@ import Data.Foldable (all, foldl, foldr)
 import Data.List (List, (:))
 import Data.List.Types (List(..))
 import Data.Map (Map)
-import Data.Set (Set, empty,singleton)
+import Data.Set (Set, empty, singleton)
 import Data.String (Pattern(..))
 import Data.String.Common (split)
 import Data.List as L
+import Data.Map as M
 import Data.Set as S
 
 type Token = String
@@ -131,8 +132,24 @@ computeNullable grammar =
  in
     fixedPoint initialNullable
 
+reachableTerminals :: List String -> Map String (Set Token) -> Set String -> Set String
+reachableTerminals rhs first nullable =
+
 computeFirst :: Grammar -> Set Token -> Map String (Set Token)
 computeFirst grammar nullable =
+    let
+        initial = foldl (\acc t ->
+            M.insert t (S.singleton t) acc
+        ) M.empty grammar.terminals
+        f = foldl (\acc t ->
+            M.insert t (S.empty) acc
+        ) initial grammar.nonTerminals
+
+--        step :: Map String (Set Token) -> Map String (Set Token)
+--        step acc =
+
+    in
+        initial
 
 parseGrammar :: String -> Either (List ParserError) Grammar
 parseGrammar input =

@@ -232,7 +232,6 @@ const reachableTerminals = (
     .map(sym => first.get(sym)!)
     .reduce((prev, cur) => {
       const r = new Set<string>();
-      addToSet(prev, r);
       addToSet(cur, r);
       return r;
     }, new Set<string>());

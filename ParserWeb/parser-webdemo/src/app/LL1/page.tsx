@@ -10,6 +10,12 @@ import {
   parseStep,
   startParser,
 } from "@/app/LL1/parser";
+
+import * as LL1 from "@/LL1.Parser";
+import * as Either from "@/Data.Either";
+import * as A from "@/Data.Array";
+import * as Set from "@/Data.Set";
+import * as Show from "@/Data.Show";
 import { useState } from "react";
 
 export default function LL1Page() {
@@ -38,10 +44,19 @@ export default function LL1Page() {
         <button
           className={"rounded-full bg-blue-500 px-5 py-2 font-bold text-white hover:bg-blue-600"}
           onClick={() => {
-            const grammar = parseGrammar(grammarInput);
-            const { nullable, first, follow, transition } = computeLL1Tables(grammar);
-            console.log(transition);
-            setLL1Table({ grammar, nullable, first, follow, transition });
+              const result = LL1.parseGrammar(grammarInput);
+              if (result instanceof Either.Left){
+              }else if (result instanceof Either.Right){
+                  const grammar = LL1.toJavascript(result.value0)
+                  console.log(grammar);
+                  const nullable = LL1.computeNullable(result.value0);
+                  const first = LL1.computeFirst(result.value0)(nullable);
+                  console.log(LL1.setToArray(nullable));
+              }
+            // const grammar = parseGrammar(grammarInput);
+            // const { nullable, first, follow, transition } = computeLL1Tables(grammar);
+            // console.log(transition);
+            // setLL1Table({ grammar, nullable, first, follow, transition });
             // console.log("Parsed grammar:", grammar)
             // const nullable = computeNullable(grammar)
             // console.log("Computed nullable:", nullable)

@@ -1,21 +1,24 @@
 "use client";
 
+import * as Either from "@/Data.Either";
+import * as List from "@/Data.List";
+import * as A from "@/Data.Array";
 import {
   LL1Table,
+  ParseContext,
+  ParseStep,
   ParseStepState,
-  Parser,
-  SENTINEL,
-  computeLL1Tables,
-  parseGrammar,
-  parseStep,
-  startParser,
-} from "@/app/LL1/parser";
-
-import * as LL1 from "@/LL1.Parser";
-import * as Either from "@/Data.Either";
-import * as A from "@/Data.Array";
-import * as Set from "@/Data.Set";
-import * as Show from "@/Data.Show";
+  createParser,
+  firstOf,
+  followOf,
+  grammarNonTerminals,
+  grammarTerminals,
+  hasNullable,
+  nextStep,
+  productionOf,
+  sentinel,
+  startParse, showProduction,
+} from "@/LL1.Parser";
 import { useState } from "react";
 
 export default function LL1Page() {
@@ -44,15 +47,11 @@ export default function LL1Page() {
         <button
           className={"rounded-full bg-blue-500 px-5 py-2 font-bold text-white hover:bg-blue-600"}
           onClick={() => {
-              const result = LL1.parseGrammar(grammarInput);
-              if (result instanceof Either.Left){
-              }else if (result instanceof Either.Right){
-                  const grammar = LL1.toJavascript(result.value0)
-                  console.log(grammar);
-                  const nullable = LL1.computeNullable(result.value0);
-                  const first = LL1.computeFirst(result.value0)(nullable);
-                  console.log(LL1.setToArray(nullable));
-              }
+            const result = createParser(grammarInput);
+            if (result instanceof Either.Left) {
+            } else if (result instanceof Either.Right) {
+              setLL1Table(result.value0);
+            }
             // const grammar = parseGrammar(grammarInput);
             // const { nullable, first, follow, transition } = computeLL1Tables(grammar);
             // console.log(transition);
@@ -107,13 +106,13 @@ function NullableFirstFollowTable(props: { ll1Table: LL1Table | null }) {
       </thead>
       <tbody className="divide-y divide-gray-200 bg-white">
         {ll1Table &&
-          Array.from(ll1Table.grammar.nonTerminals).map(nonterminal => (
+          grammarNonTerminals(ll1Table).map(nonterminal => (
             <tr key={nonterminal} className="divide-x divide-gray-200">
               {[
                 nonterminal,
-                ll1Table.nullable.has(nonterminal) ? "Yes" : "No",
-                Array.from(ll1Table.first.get(nonterminal)!).join(", ") ?? "",
-                Array.from(ll1Table.follow.get(nonterminal)!).join(", ") ?? "",
+                hasNullable(nonterminal)(ll1Table) ? "Yes" : "No",
+                firstOf(nonterminal)(ll1Table).join(", "),
+                followOf(nonterminal)(ll1Table).join(", "),
               ].map((content, index) => (
                 <td
                   key={nonterminal + index.toString}
@@ -132,13 +131,13 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
   const { ll1Table } = props;
   const [tokenStream, setTokenStream] = useState<string>("id + id * id");
   const [parseState, setParseState] = useState<ParseStepState | null>(null);
-  const startParse = (input: string, ll1Table: LL1Table) => {
-    const state = startParser(ll1Table, [...input.split(/\s/), SENTINEL]);
+  const start = (input: string, ll1Table: LL1Table) => {
+    const state = startParse([...input.split(/\s/), sentinel])(ll1Table);
     setParseState(state);
   };
 
-  const stepForward = (parser: Parser) => {
-    const state = parseStep(parser);
+  const forward = (state: ParseStepState) => {
+    const n = nextStep(state);
     setParseState(state);
   };
 
@@ -162,7 +161,7 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
           className={
             "rounded-full bg-blue-500 px-5 py-2 font-bold text-white hover:bg-blue-600 disabled:bg-gray-300"
           }
-          onClick={() => ll1Table && tokenStream && startParse(tokenStream, ll1Table)}
+          onClick={() => ll1Table && tokenStream && start(tokenStream, ll1Table)}
           disabled={!(ll1Table && tokenStream)}>
           Start/Reset
         </button>
@@ -171,7 +170,7 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
             "rounded-full bg-blue-500 px-5 py-2 font-bold text-white hover:bg-blue-600 disabled:bg-gray-300"
           }
           disabled={!(ll1Table && tokenStream)}
-          onClick={() => parseState && stepForward(parseState.parser)}>
+          onClick={() => parseState && forward(parseState)}>
           Step Forward
         </button>
       </div>
@@ -187,7 +186,7 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
                 name="stack"
                 disabled={true}
                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
-                value={parseState?.parser.stack.join(" ") ?? ""}
+                value={parseState instanceof ParseStep ? parseState.value0.stack.join(" ") : ""}
               />
             </div>
           </div>
@@ -201,7 +200,7 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
                 name="remainingInput"
                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
                 disabled={true}
-                value={parseState?.parser.tokenStream.slice(parseState?.parser.position ?? 0).join(" ") ?? ""}
+                value={parseState instanceof ParseStep ? parseState.value0.remainTokenStream.join(" ") : ""}
               />
             </div>
           </div>
@@ -216,7 +215,7 @@ function Interpreter(props: { ll1Table: LL1Table | null }) {
                 name="rule"
                 disabled={true}
                 className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6"
-                value={parseState?.parser.rule ?? ""}
+                value={parseState instanceof ParseStep ? parseState.value0.rule : ""}
               />
             </div>
           </div>
@@ -235,7 +234,7 @@ function TransitionTable(props: { ll1Table: LL1Table | null }) {
         <thead>
           <tr className="divide-x divide-gray-300">
             <>
-              {["", ...Array.from(ll1Table.grammar.terminals)].map(terminal => (
+              {["", ...grammarTerminals(ll1Table)].map(terminal => (
                 <th
                   key={terminal}
                   scope="col"
@@ -247,20 +246,17 @@ function TransitionTable(props: { ll1Table: LL1Table | null }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 bg-white">
-          {Array.from(ll1Table.grammar.nonTerminals).map(nonterminal => (
+          {grammarNonTerminals(ll1Table).map(nonterminal => (
             <tr key={nonterminal} className="divide-x divide-gray-200">
               <td className="whitespace-nowrap p-4 text-xl text-gray-500">{nonterminal}</td>
-              {Array.from(ll1Table.grammar.terminals).map(terminal => (
+              {grammarTerminals(ll1Table).map(terminal => (
                 <td key={terminal} className="whitespace-nowrap p-4 text-lg text-gray-500">
-                  {ll1Table.transition
-                    .get(nonterminal)
-                    ?.get(terminal)
-                    ?.map(production => (
-                      <>
-                        {production.lhs} {"->"} {production.rhs.length == 0 ? "ε" : production.rhs.join(" ")}
-                        <br />
-                      </>
-                    ))}
+                  {productionOf(nonterminal)(terminal)(ll1Table).map(production => (
+                    <>
+                      {showProduction(production)}
+                      <br />
+                    </>
+                  ))}
                 </td>
               ))}
             </tr>

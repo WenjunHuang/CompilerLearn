@@ -2,23 +2,27 @@ module LL1.Parser where
 
 import Prelude
 
-import Control.Monad.Except.Trans (ExceptT, except)
-import Control.Monad.State (State)
+import Control.Monad.Error.Class (throwError)
+import Control.Monad.Except.Trans (ExceptT, runExceptT)
+import Control.Monad.State (State, evalState)
 import Control.Monad.State.Class (get)
 import Data.Either (Either(..))
-import Data.Foldable (all, foldMap, foldl, foldr)
+import Data.Foldable (class Foldable, all, foldMap, foldl, foldr)
 import Data.Functor (map)
-import Data.List (List, filter, mapMaybe, reverse, takeWhile, (:))
-import Data.List.Types (List(..))
+import Data.List (List(..), mapMaybe, reverse, takeWhile, (:))
 import Data.Map (Map)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Nullable (Nullable)
 import Data.Set (Set, empty, singleton)
 import Data.String (Pattern(..))
-import Data.String.Common (split, trim)
+import Data.String.Common (joinWith, split, trim)
+import Data.Traversable (class Traversable)
 import Data.Array as A
+import Data.Either as E
 import Data.List as L
 import Data.Map as M
 import Data.Set as S
+import Debug as Debug
 
 type Token = String
 
@@ -57,14 +61,35 @@ type Grammar =
   , start :: String
   }
 
-grammarTerminals :: Grammar -> Array String
-grammarTerminals grammar = A.fromFoldable grammar.terminals
+showProduction :: Production -> String
+showProduction production = production.lhs <> " -> " <> (joinWith " " (A.fromFoldable production.rhs))
+firstTokensOf :: String -> LL1Table -> Array String
+firstTokensOf nt ll1Table = A.fromFoldable $ fromMaybe S.empty (M.lookup nt ll1Table.first)
 
-grammarNonTerminals :: Grammar -> Array String
-grammarNonTerminals grammar = A.fromFoldable grammar.nonTerminals
+grammarTerminals :: LL1Table -> Array String
+grammarTerminals ll1Table = A.fromFoldable ll1Table.grammar.terminals
 
-grammarStart :: Grammar -> String
-grammarStart = _.start
+grammarNonTerminals :: LL1Table -> Array String
+grammarNonTerminals ll1Table = A.fromFoldable ll1Table.grammar.nonTerminals
+
+grammarStart :: LL1Table -> String
+grammarStart = _.grammar.start
+
+hasNullable :: String -> LL1Table -> Boolean
+hasNullable nt ll1Table = S.member nt ll1Table.nullable
+
+firstOf :: String -> LL1Table -> Array String
+firstOf nt ll1Table =
+  A.fromFoldable $ fromMaybe S.empty (M.lookup nt ll1Table.first)
+
+followOf :: String -> LL1Table -> Array String
+followOf nt ll1Table =
+  A.fromFoldable $ fromMaybe S.empty (M.lookup nt ll1Table.follow)
+
+productionOf :: String -> String -> LL1Table -> Array Production
+productionOf terminal nonTerminal ll1Table =
+  maybe mempty A.fromFoldable $ M.lookup nonTerminal ll1Table.transition
+    >>= M.lookup terminal
 
 type Parser =
   { ll1Table :: LL1Table
@@ -90,7 +115,7 @@ parseProduction loc input =
   case split (Pattern "->") input of
     [ lhs, rhs ] ->
       let
-        tokens = filter (\x -> x /= "") $ L.fromFoldable (split (Pattern " ") rhs)
+        tokens = L.filter (\x -> x /= "")  (L.fromFoldable $ split (Pattern " ") rhs)
       in
         Right
           { lhs: trim lhs
@@ -211,33 +236,30 @@ computeFollow grammar nullable first = fixedPoint $ foldMap (\nt -> M.singleton 
 
 computeTransition :: Grammar -> Set Token -> Map String (Set Token) -> Map String (Set Token) -> Map String (Map String (List Production))
 computeTransition grammar nullable first follow =
-  let
-    ts = foldMap (\t -> M.singleton t Nil) grammar.nonTerminals
-    trans = foldMap (\nt -> M.singleton nt ts) grammar.nonTerminals
-    f = foldl
-      ( \trans' rule ->
-          let
-            b = if all (\x -> S.member x nullable) rule.rhs then fromMaybe S.empty (M.lookup rule.lhs follow) else S.empty
-            update trans'' t =
-              M.update
-                ( \v ->
-                    case M.lookup t v of
-                      Nothing -> Nothing
-                      Just x -> Just (M.insert t (rule : x) v)
-                )
-                rule.lhs
-                trans''
-            tran1 = foldl update trans (b <> reachableTerminals rule.rhs first nullable)
-          in
-            tran1
-      )
-      trans
-      grammar.rules
-  in
-    f
+  foldl updateTrans initTrans grammar.rules
+  where
+  ts = foldMap (\t -> M.singleton t Nil) grammar.nonTerminals
+  initTrans = foldMap (\nt -> M.singleton nt ts) grammar.nonTerminals
+  updateTrans trans rule =
+    foldl (updateProduction rule) trans (followOfRuleNonTerm <> terms)
+    where
+    followOfRuleNonTerm = if all (\x -> S.member x nullable) rule.rhs then fromMaybe mempty (M.lookup rule.lhs follow) else mempty
+    terms = reachableTerminals rule.rhs first nullable
+    updateProduction rule productions term =
+      M.update (\v -> Just $ M.update (\x -> Just (rule : x)) term v) rule.lhs productions
 
-lexer :: ExceptT (List ParserError) (State String) Grammar
-lexer = do
+createLL1Table :: Grammar -> LL1Table
+createLL1Table grammar =
+  let
+    nullable = Debug.spy "computeNullable" (computeNullable grammar)
+    first = Debug.spy "computeFirst" (computeFirst grammar nullable)
+    follow = computeFollow grammar nullable first
+    transition = computeTransition grammar nullable first follow
+  in
+    { grammar, nullable, first, follow, transition }
+
+parseLL1Table :: ExceptT (Array ParserError) (State String) LL1Table
+parseLL1Table = do
   input <- get
   let
     lines = L.fromFoldable $ split (Pattern "\n") input
@@ -246,22 +268,64 @@ lexer = do
   case partitioned.lefts of
     Nil ->
       case partitioned.rights of
-        Nil -> except $ Left ({ location: defaultLocationRange, message: "No productions found" } : Nil)
+        Nil -> throwError [ { location: defaultLocationRange, message: "No productions found" } ]
         productions@(x : _) ->
           let
             { terminals, nonTerminals } = extractProductions productions
+            grammar = { rules: partitioned.rights, terminals, nonTerminals, start: x.lhs }
           in
-            pure { rules: partitioned.rights, terminals, nonTerminals, start: x.lhs }
+            pure $ createLL1Table grammar
     errors -> do
-      except $ Left errors
+      throwError $ A.fromFoldable errors
 
-createLL1Table :: ExceptT (List ParserError) (State Grammar) LL1Table
-createLL1Table = do
-  except $ Left ({ location: defaultLocationRange, message: "No productions found" } : Nil)
---do
---  grammar <- get
---  let
---    nullable = computeNullable grammar
---    first = computeFirst grammar nullable
---    follow = computeFollow grammar nullable first
---    transition = computeTransition grammar nullable first follow
+createParser :: String -> Either (Array ParserError) LL1Table
+createParser grammarSource = evalState (runExceptT parseLL1Table) grammarSource
+
+type ParseContext =
+  { ll1Table :: LL1Table
+  , tokenStream :: Array Token
+  , position :: Int
+  , remainTokenStream :: Array Token
+  , rule :: String
+  , stack :: Array Token
+  }
+
+data ParseStepState
+  = ParseCompleted ParseContext
+  | ParseError ParseContext String
+  | ParseStep ParseContext
+
+startParse :: Array String -> LL1Table -> ParseStepState
+startParse source ll1Table =
+  ParseStep $
+    { ll1Table
+    , tokenStream: A.fromFoldable source
+    , remainTokenStream: A.fromFoldable source
+    , position: 0
+    , rule: ""
+    , stack: [ sentinel, grammarStart ll1Table ]
+    }
+
+nextStep :: ParseStepState -> Either String ParseStepState
+nextStep (ParseCompleted _) = Left "Parse completed"
+nextStep (ParseError _ _) = Left "Parse error"
+nextStep (ParseStep context) = do
+  currentToken <- E.note ("Token position:" <> (show context.position) <> " is not valid") (A.index context.tokenStream context.position)
+  top <- E.note "Stack is empty" (A.last context.stack)
+  let
+    next =
+      if S.member top context.ll1Table.grammar.terminals then
+        if top == currentToken then ParseStep $ context
+          { position = context.position + 1
+          , remainTokenStream = A.drop 1 context.remainTokenStream
+          , stack = A.dropEnd 1 context.stack
+          }
+        else ParseError context ("Unexpected token: " <> currentToken)
+      else if S.member top context.ll1Table.grammar.nonTerminals then
+        case (M.lookup top context.ll1Table.transition) >>= (\x -> M.lookup currentToken x) of
+          Nothing -> ParseError context ("Unexpected token: " <> currentToken)
+          Just Nil -> ParseError context ("Unexpected token: " <> currentToken)
+          Just (x : _) -> ParseStep $ context { rule = x.lhs <> " -> " <> (joinWith " " (A.fromFoldable x.rhs)), stack = A.dropEnd 1 context.stack }
+      else ParseCompleted context
+  pure $ next
+

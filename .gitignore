@@ -1,3 +1,7 @@
-.idea
-node_module/
+.idea/
+.next/
+.spago/
+node_modules/
+output/
 build/
+.stack-work/
